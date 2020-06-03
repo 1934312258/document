@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cm-demo
+spec:
+  selector:
+    matchLabels:
+      app: cm-demo
+  replicas: 3
+  revisionHistoryLimit: 10
+  strategy:
+      type: RollingUpdate
+      rollingUpdate:
+         maxSurge: 1
+         maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: cm-demo
+    spec:
+      containers:
+      - name: config
+        image: linuxcloud/springboot-docker:v3.0
+        args: ["--spring.config.location=application.properties,mysql.properties"]
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: hello-config
+          mountPath: /application.properties
+          subPath: application.properties
+        - name: hello-config
+          mountPath: /mysql.properties
+          subPath: mysql.properties
+
+      volumes:
+      - name: hello-config
+        configMap:
+          name: hello-config
+          items:
+             - key: application.properties
+               path: application.properties
+             - key: mysql.properties
+               path: mysql.properties
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cm-service
+spec:
+  selector:
+    app: cm-demo
+  ports:
+    - protocol: TCP
+      port: 8889
+      targetPort: 8080
+

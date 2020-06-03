@@ -1,0 +1,519 @@
+入口分析在spring.doc
+
+
+1、org.springframework.aop.framework.autoproxy.AbstractAutoProxyCreator# postProcessBeforeInitialization
+2、org.springframework.aop.framework.autoproxy.AbstractAutoProxyCreator# postProcessAfterInitialization
+3、getTransactionAttribute获取事物属性
+
+
+
+
+
+1、org.springframework.aop.framework.autoproxy.AbstractAutoProxyCreator# postProcessBeforeInitialization后置处理器的before方法创建代理对象的要求比较高，一般使用after方法创建代理对象=============================================
+后置处理器创建代理对象
+	public Object postProcessBeforeInstantiation(Class<?> beanClass, String beanName) throws BeansException {
+		Object cacheKey = getCacheKey(beanClass, beanName);
+
+		//判断我们的beanName以及是否处理过
+		if (beanName == null || !this.targetSourcedBeans.contains(beanName)) {
+			if (this.advisedBeans.containsKey(cacheKey)) {
+				return null;
+			}
+			/*
+			 *判断当前的bean是不是基础的bean或者直接跳过，不需要代理的
+			    advice
+				Pointcut
+				Advisor
+				AopInfrastructureBean
+			 **/
+			if (isInfrastructureClass(beanClass) || shouldSkip(beanClass, beanName)) {
+				this.advisedBeans.put(cacheKey, Boolean.FALSE);
+				return null;
+			}
+		}
+
+        		/**
+         		* 判断我们容器中有没有自定义的targetSource 有为我们自动创建对象
+       		  * 当时这一步的要求比较高，而且我们正常不会这里创建对象 ...
+        		 * */
+		if (beanName != null) {
+			TargetSource targetSource = getCustomTargetSource(beanClass, beanName);
+			if (targetSource != null) {
+				this.targetSourcedBeans.add(beanName);
+				Object[] specificInterceptors = getAdvicesAndAdvisorsForBean(beanClass, beanName, targetSource);
+				Object proxy = createProxy(beanClass, beanName, specificInterceptors, targetSource);
+				this.proxyTypes.put(cacheKey, proxy.getClass());
+				return proxy;
+			}
+		}
+
+		return null;
+	}
+	
+	protected TargetSource getCustomTargetSource(Class<?> beanClass, String beanName) {
+	    	//容器中必须要包含有个TargetSourceCreators 并且我们的组件也需要实现TargetSource接口
+		if (this.customTargetSourceCreators != null &&
+				this.beanFactory != null && this.beanFactory.containsBean(beanName)) {
+			for (TargetSourceCreator tsc : this.customTargetSourceCreators) {
+				TargetSource ts = tsc.getTargetSource(beanClass, beanName);
+				if (ts != null) {
+					// Found a matching TargetSource.
+					if (logger.isDebugEnabled()) {
+						logger.debug("TargetSourceCreator [" + tsc +
+								"] found custom TargetSource for bean with name '" + beanName + "'");
+					}
+					return ts;
+				}
+			}
+		}
+		return null;
+	}
+
+2、postProcessAfterInitialization，后置处理器的before方法创建代理对象的要求比较高，一般使用after方法创建代理对象====================================================================
+	public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+		if (bean != null) {
+			Object cacheKey = getCacheKey(bean.getClass(), beanName);
+			if (!this.earlyProxyReferences.contains(cacheKey)) {
+			   	 //当前对象是否需要包装
+				return wrapIfNecessary(bean, beanName, cacheKey);
+			}
+		}
+		return bean;
+	}
+	
+wrapIfNecessary===================================================================================================================
+	protected Object wrapIfNecessary(Object bean, String beanName, Object cacheKey) {
+		//判断代理对象再postProcessAfterInitialization接口中是否被处理过
+		if (beanName != null && this.targetSourcedBeans.contains(beanName)) {
+			return bean;
+		}
+		if (Boolean.FALSE.equals(this.advisedBeans.get(cacheKey))) {
+			return bean;
+		}
+		//是否为基础的Bean 或者该对象不应该被调用
+		if (isInfrastructureClass(bean.getClass()) || shouldSkip(bean.getClass(), beanName)) {
+			this.advisedBeans.put(cacheKey, Boolean.FALSE);
+			return bean;
+		}
+
+		//找到我们容器中所有的增强器
+		Object[] specificInterceptors = getAdvicesAndAdvisorsForBean(bean.getClass(), beanName, null);
+		
+		//增强器不为空
+		if (specificInterceptors != DO_NOT_PROXY) {
+			this.advisedBeans.put(cacheKey, Boolean.TRUE);
+			//创建代理对象
+			Object proxy = createProxy(
+					bean.getClass(), beanName, specificInterceptors, new SingletonTargetSource(bean));
+			this.proxyTypes.put(cacheKey, proxy.getClass());
+			return proxy;
+		}
+
+		this.advisedBeans.put(cacheKey, Boolean.FALSE);
+		return bean;
+	}
+getAdvicesAndAdvisorsForBean=======================================================================================================================	
+事务代码找到增强器之后没有缓存，因为只需要找到实现advisor接口的增强器，并不消耗性能
+org.springframework.aop.framework.autoproxy.AbstractAdvisorAutoProxyCreator#getAdvicesAndAdvisorsForBean(AbstractAutoProxyCreator的子类)
+	protected Object[] getAdvicesAndAdvisorsForBean(Class<?> beanClass, String beanName, TargetSource targetSource) {
+		//找到合适的增强器
+		List<Advisor> advisors = findEligibleAdvisors(beanClass, beanName);
+		//增强器为空,不需要代理
+		if (advisors.isEmpty()) {
+			return DO_NOT_PROXY;
+		}
+		//返回增强器
+		return advisors.toArray();
+	}	
+findEligibleAdvisors========================================================================================================================
+		/*
+		 *找到合适的增强器
+		 **/
+	protected List<Advisor> findEligibleAdvisors(Class<?> beanClass, String beanName) {
+        		//找到候选的增强器
+		List<Advisor> candidateAdvisors = findCandidateAdvisors();
+		//从候选的中挑选出合适的增强器
+		List<Advisor> eligibleAdvisors = findAdvisorsThatCanApply(candidateAdvisors, beanClass, beanName);
+		//增强器进行扩展
+		extendAdvisors(eligibleAdvisors);
+		//对增强器进行排序
+		if (!eligibleAdvisors.isEmpty()) {
+			eligibleAdvisors = sortAdvisors(eligibleAdvisors);
+		}
+		return eligibleAdvisors;
+	}	?
+
+==========================================findCandidateAdvisors();==================================================
+	/**
+	 * 找到候选的增强器
+ 	* */
+	protected List<Advisor> findCandidateAdvisors() {
+       		 //通过我们我们增强器探测工具找
+		return this.advisorRetrievalHelper.findAdvisorBeans();
+	}	
+
+findAdvisorBeans=====================================================================================================================================
+	org.springframework.aop.framework.autoproxy.BeanFactoryAdvisorRetrievalHelper#findAdvisorBeans
+	public List<Advisor> findAdvisorBeans() {
+		//看我们类级别缓存中有没有
+		String[] advisorNames = this.cachedAdvisorBeanNames;
+		if (advisorNames == null) {
+		    	//去容器中查找实现了我们Advisor接口的实现类 的名称:(org.springframework.transaction.config.internalTransactionAdvisor  类型为BeanFactoryTransactionAttributeSourceAdvisor)
+			advisorNames = BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
+					this.beanFactory, Advisor.class, true, false);
+			//放入到缓存中
+			this.cachedAdvisorBeanNames = advisorNames;
+		}
+		if (advisorNames.length == 0) {
+			return new ArrayList<Advisor>();
+		}
+
+		List<Advisor> advisors = new ArrayList<Advisor>();
+		//循环我们的增强器
+		for (String name : advisorNames) {
+		    	//判断是不是合适的
+			if (isEligibleBean(name)) {
+			    	//当前的增强器是不是正在创建的 
+				if (this.beanFactory.isCurrentlyInCreation(name)) {
+					if (logger.isDebugEnabled()) {
+						logger.debug("Skipping currently created advisor '" + name + "'");
+					}
+				}
+				else {
+					try {
+					    	//通过getBean的显示调用获取BeanFactoryTransactionAttributeSourceAdvisor 组件
+						advisors.add(this.beanFactory.getBean(name, Advisor.class));
+					}
+					catch (BeanCreationException ex) {
+						Throwable rootCause = ex.getMostSpecificCause();
+						if (rootCause instanceof BeanCurrentlyInCreationException) {
+							BeanCreationException bce = (BeanCreationException) rootCause;
+							if (this.beanFactory.isCurrentlyInCreation(bce.getBeanName())) {
+								if (logger.isDebugEnabled()) {
+									logger.debug("Skipping advisor '" + name +
+											"' with dependency on currently created bean: " + ex.getMessage());
+								}
+								// Ignore: indicates a reference back to the bean we're trying to advise.
+								// We want to find advisors other than the currently created bean itself.
+								continue;
+							}
+						}
+						throw ex;
+					}
+				}
+			}
+		}
+		return advisors;
+	}
+	
+	
+	/**
+	 * 判断包含是否为合适的最终逻辑
+	 * 容器中的bean定义包含当前的增强器的bean定义，且bean的role是int ROLE_INFRASTRUCTURE = 2;
+	 * */
+	protected boolean isEligibleAdvisorBean(String beanName) {
+		return (this.beanFactory.containsBeanDefinition(beanName) &&
+				this.beanFactory.getBeanDefinition(beanName).getRole() == BeanDefinition.ROLE_INFRASTRUCTURE);
+	}
+	
+	
+================================================ findAdvisorsThatCanApply(candidateAdvisors, beanClass, beanName);===============================
+	protected List<Advisor> findAdvisorsThatCanApply(
+			List<Advisor> candidateAdvisors, Class<?> beanClass, String beanName) {
+
+		ProxyCreationContext.setCurrentProxiedBeanName(beanName);
+		try {
+		    	//真正的去候选的增强器中找到当前能用的增强器
+			return AopUtils.findAdvisorsThatCanApply(candidateAdvisors, beanClass);
+		}
+		finally {
+			ProxyCreationContext.setCurrentProxiedBeanName(null);
+		}
+	}
+
+org.springframework.aop.support.AopUtils#findAdvisorsThatCanApply==============================================================================================
+	public static List<Advisor> findAdvisorsThatCanApply(List<Advisor> candidateAdvisors, Class<?> clazz) {
+		//若传入进来的候选增强器为空直接返回
+		if (candidateAdvisors.isEmpty()) {
+			return candidateAdvisors;
+		}
+		//创建一个本类能用的增前期集合
+		List<Advisor> eligibleAdvisors = new LinkedList<Advisor>();
+		//循环候选的增强器
+		for (Advisor candidate : candidateAdvisors) {
+			//判断增强器是不是实现了IntroductionAdvisor  很明显没实现该接口
+			if (candidate instanceof IntroductionAdvisor && canApply(candidate, clazz)) {
+				eligibleAdvisors.add(candidate);
+			}
+		}
+		boolean hasIntroductions = !eligibleAdvisors.isEmpty();
+		for (Advisor candidate : candidateAdvisors) {
+			if (candidate instanceof IntroductionAdvisor) {
+				// already processed
+				continue;
+			}
+			//正在找出能用的增强器
+			if (canApply(candidate, clazz, hasIntroductions)) {
+				eligibleAdvisors.add(candidate);
+			}
+		}
+		return eligibleAdvisors;
+	}
+===================== canApply=================================================================================	
+	/**
+	 * 判断当前增强器是否为本来能用的
+	 * */
+	public static boolean canApply(Advisor advisor, Class<?> targetClass, boolean hasIntroductions) {
+		//根据类的继承图 发现 BeanFactoryTransactionAttributeSourceAdvisor没实现IntroductionAdvisor接口
+		if (advisor instanceof IntroductionAdvisor) {
+			return ((IntroductionAdvisor) advisor).getClassFilter().matches(targetClass);
+		}
+		//BeanFactoryTransactionAttributeSourceAdvisor实现了PointcutAdvisor接口
+		else if (advisor instanceof PointcutAdvisor) {
+		    	//强制转换为PointcutAdvisor
+			PointcutAdvisor pca = (PointcutAdvisor) advisor;
+			return canApply(pca.getPointcut(), targetClass, hasIntroductions);
+		}
+		else {
+			// It doesn't have a pointcut so we assume it applies.
+			return true;
+		}
+	}	
+====================================================================================================================
+    /**
+	 * 判断当前增强器是否为本来能用的
+	 * */
+	public static boolean canApply(Pointcut pc, Class<?> targetClass, boolean hasIntroductions) {
+		Assert.notNull(pc, "Pointcut must not be null");
+		if (!pc.getClassFilter().matches(targetClass)) {
+			return false;
+		}
+        
+       		 /**
+        		 * 获取切点中的方法匹配器 TransactionAttributeSourcePointcut
+       		  * 该切点在创建BeanFactoryTransactionAttributeSourceAdvisor的时候 创建了切点TransactionAttributeSourcePointcut
+        		 * */
+		MethodMatcher methodMatcher = pc.getMethodMatcher();
+		if (methodMatcher == MethodMatcher.TRUE) {
+			// No need to iterate the methods if we're matching any method anyway...
+			return true;
+		}
+        
+        		/**
+        		 * 判断方法匹配器是不是IntroductionAwareMethodMatcher
+         		* */
+		IntroductionAwareMethodMatcher introductionAwareMethodMatcher = null;
+		if (methodMatcher instanceof IntroductionAwareMethodMatcher) {
+			introductionAwareMethodMatcher = (IntroductionAwareMethodMatcher) methodMatcher;
+		}
+        
+        		//获取当前类的实现接口类型
+		Set<Class<?>> classes = new LinkedHashSet<Class<?>>(ClassUtils.getAllInterfacesForClassAsSet(targetClass));
+		classes.add(targetClass);
+		//循环上一步的接口类型
+		for (Class<?> clazz : classes) {
+		    	//获取接口的所有方法
+			Method[] methods = ReflectionUtils.getAllDeclaredMethods(clazz);
+			//循环我们接口中的方法
+			for (Method method : methods) {
+			    	//正在进行匹配的是methodMatcher.matches(method, targetClass)这个逻辑
+				if ((introductionAwareMethodMatcher != null &&introductionAwareMethodMatcher.matches(method, targetClass, hasIntroductions)) ||
+						methodMatcher.matches(method, targetClass)) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}	
+========================================================================================================================	
+	org.springframework.transaction.interceptor.TransactionAttributeSourcePointcut#matches
+	
+	public boolean matches(Method method, Class<?> targetClass) {
+		if (targetClass != null && TransactionalProxy.class.isAssignableFrom(targetClass)) {
+			return false;
+		}
+		//获取我们的事物源对象（在ProxyTransactionManagementConfiguration配置类配置的这里获取）
+		TransactionAttributeSource tas = getTransactionAttributeSource();
+		//从事物源对象中获取事物属性
+		return (tas == null || tas.getTransactionAttribute(method, targetClass) != null);
+	}
+	
+2、getTransactionAttribute获取事物属性===================================================================================================	
+	/**
+	 * 获取事物属性对象
+	 * */
+	public TransactionAttribute getTransactionAttribute(Method method, Class<?> targetClass) {
+		if (method.getDeclaringClass() == Object.class) {
+			return null;
+		}
+
+		//通过目标类和目标类的接口方法 拼接缓存key
+		Object cacheKey = getCacheKey(method, targetClass);
+		//去缓存中获取
+		TransactionAttribute cached = this.attributeCache.get(cacheKey);
+		if (cached != null) {
+			//缓存中有 直接返回就可以了
+			if (cached == NULL_TRANSACTION_ATTRIBUTE) {
+				return null;
+			}
+			else {
+				return cached;
+			}
+		}
+		else {
+			//计算事物属性.
+			TransactionAttribute txAttr = computeTransactionAttribute(method, targetClass);
+			//若事物属性为空.
+			if (txAttr == null) {
+			   	 //在缓存中标识 为事物方法
+				this.attributeCache.put(cacheKey, NULL_TRANSACTION_ATTRIBUTE);
+			}
+			else {
+				String methodIdentification = ClassUtils.getQualifiedMethodName(method, targetClass);
+				//为事物属性设置方法描述符号
+				if (txAttr instanceof DefaultTransactionAttribute) {
+					((DefaultTransactionAttribute) txAttr).setDescriptor(methodIdentification);
+				}
+				if (logger.isDebugEnabled()) {
+					logger.debug("Adding transactional method '" + methodIdentification + "' with attribute: " + txAttr);
+				}
+				//加入到缓存
+				this.attributeCache.put(cacheKey, txAttr);
+			}
+			return txAttr;
+		}
+	}
+	
+computeTransactionAttribute===================================================================================================================================    
+   	 /**
+	* 首先从实现类方法上找有没有@Transactionl注解，然后到实现类类声明上找，然后去接口类的方法上找，最后到接口声明上找
+    	 * 计算事物属性
+    	 * */
+	protected TransactionAttribute computeTransactionAttribute(Method method, Class<?> targetClass) {
+	    	//判断方法的修饰符
+		if (allowPublicMethodsOnly() && !Modifier.isPublic(method.getModifiers())) {
+			return null;
+		}
+
+		//忽略cglib的代理
+		Class<?> userClass = ClassUtils.getUserClass(targetClass);
+		/**
+		 * method为接口中的方法,specificMethod为我们实现类方法
+		 * */
+		Method specificMethod = ClassUtils.getMostSpecificMethod(method, userClass);
+		// If we are dealing with method with generic parameters, find the original method.
+		specificMethod = BridgeMethodResolver.findBridgedMethod(specificMethod);
+
+		// 找我们【实现类】中的【方法】上的事物属性
+		TransactionAttribute txAttr = findTransactionAttribute(specificMethod);
+		if (txAttr != null) {
+			return txAttr;
+		}
+
+	    	//【方法所在类】上有没有事物属性
+		txAttr = findTransactionAttribute(specificMethod.getDeclaringClass());
+		if (txAttr != null && ClassUtils.isUserLevelMethod(method)) {
+			return txAttr;
+		}
+        
+        		【接口上的指定的方法】
+		if (specificMethod != method) {
+			// Fallback is to look at the original method.
+			txAttr = findTransactionAttribute(method);
+			if (txAttr != null) {
+				return txAttr;
+			}
+		    	【接口上】
+			txAttr = findTransactionAttribute(method.getDeclaringClass());
+			if (txAttr != null && ClassUtils.isUserLevelMethod(method)) {
+				return txAttr;
+			}
+		}
+
+		return null;
+	}	
+	
+    
+   	 /**
+   	 * 从方法上找事物属性对象
+    	 * */
+	protected TransactionAttribute findTransactionAttribute(Method method) {
+		return determineTransactionAttribute(method);
+	}
+	
+	protected TransactionAttribute determineTransactionAttribute(AnnotatedElement element) {
+		
+		//获取方法上的注解
+		if (element.getAnnotations().length > 0) {
+		   	 //事物注解解析器
+			for (TransactionAnnotationParser annotationParser : this.annotationParsers) {
+			   	 //解析我们的注解
+				TransactionAttribute attr = annotationParser.parseTransactionAnnotation(element);
+				if (attr != null) {
+					return attr;
+				}
+			}
+		}
+		return null;
+	}
+	
+	/**
+	 * 解析事物注解
+	 * */
+	public TransactionAttribute parseTransactionAnnotation(AnnotatedElement element) {
+		//解析@Transactional属性对象
+		AnnotationAttributes attributes = AnnotatedElementUtils.getMergedAnnotationAttributes(
+				element, Transactional.class);
+		if (attributes != null) {
+		    	//真正的解析@Transactional属性
+			return parseTransactionAnnotation(attributes);
+		}
+		else {
+			return null;
+		}
+	}	
+	
+    
+    	/**
+   	  * 解析事物注解
+    	 * */
+	protected TransactionAttribute parseTransactionAnnotation(AnnotationAttributes attributes) {
+		RuleBasedTransactionAttribute rbta = new RuleBasedTransactionAttribute();
+        
+        		//传播行为
+		Propagation propagation = attributes.getEnum("propagation");
+		rbta.setPropagationBehavior(propagation.value());
+		//隔离级别
+		Isolation isolation = attributes.getEnum("isolation");
+		rbta.setIsolationLevel(isolation.value());
+		//事物超时
+		rbta.setTimeout(attributes.getNumber("timeout").intValue());
+		//判断是否为只读事物
+		rbta.setReadOnly(attributes.getBoolean("readOnly"));
+		//事物的名称吧
+		rbta.setQualifier(attributes.getString("value"));
+
+		List<RollbackRuleAttribute> rollbackRules = new ArrayList<RollbackRuleAttribute>();
+		//事物回滚规则
+		for (Class<?> rbRule : attributes.getClassArray("rollbackFor")) {
+			rollbackRules.add(new RollbackRuleAttribute(rbRule));
+		}
+		
+		//对哪个类进行回滚
+		for (String rbRule : attributes.getStringArray("rollbackForClassName")) {
+			rollbackRules.add(new RollbackRuleAttribute(rbRule));
+		}
+		//对哪些异常不回滚
+		for (Class<?> rbRule : attributes.getClassArray("noRollbackFor")) {
+			rollbackRules.add(new NoRollbackRuleAttribute(rbRule));
+		}
+		//对哪些类不回滚
+		for (String rbRule : attributes.getStringArray("noRollbackForClassName")) {
+			rollbackRules.add(new NoRollbackRuleAttribute(rbRule));
+		}
+		rbta.setRollbackRules(rollbackRules);
+
+		return rbta;
+	}	
+

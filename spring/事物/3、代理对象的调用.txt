@@ -1,0 +1,405 @@
+1、org.springframework.aop.framework.JdkDynamicAopProxy#invoke
+2、org.springframework.aop.framework.ReflectiveMethodInvocation#proceed
+3、org.springframework.transaction.interceptor.TransactionAspectSupport#invokeWithinTransaction（事务调用）
+4、org.springframework.transaction.interceptor.TransactionAspectSupport#createTransactionIfNecessary
+5、org.springframework.transaction.support.AbstractPlatformTransactionManager#getTransaction
+
+
+
+
+
+
+1、org.springframework.aop.framework.JdkDynamicAopProxy#invoke==============================================================================
+	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+		MethodInvocation invocation;
+		Object oldProxy = null;
+		boolean setProxyContext = false;
+
+		TargetSource targetSource = this.advised.targetSource;
+		Class<?> targetClass = null;
+		Object target = null;
+
+		try {
+ 
+			Object retVal;
+            			//暴露代理对象
+			if (this.advised.exposeProxy) {
+				// Make invocation available if necessary.
+				oldProxy = AopContext.setCurrentProxy(proxy);
+				setProxyContext = true;
+			}
+
+			// May be null. Get as late as possible to minimize the time we "own" the target,
+			// in case it comes from a pool.
+			target = targetSource.getTarget();
+			if (target != null) {
+				targetClass = target.getClass();
+			}
+
+			//把增强器转为方法拦截器链条
+			List<Object> chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice(method, targetClass);
+
+		    	//拦截器链为空,直接通过反射进行调用
+			if (chain.isEmpty()) {
+                			//通过反射进行调用
+				Object[] argsToUse = AopProxyUtils.adaptArgumentsIfNecessary(method, args);
+				retVal = AopUtils.invokeJoinpointUsingReflection(target, method, argsToUse);
+			}
+			else {
+				//创建反射方法调用对象
+				invocation = new ReflectiveMethodInvocation(proxy, target, method, args, targetClass, chain);
+			   	 //通过方法拦截器进行拦截调用
+				retVal = invocation.proceed();
+			}
+
+			// Massage return value if necessary.
+			Class<?> returnType = method.getReturnType();
+			if (retVal != null && retVal == target &&
+					returnType != Object.class && returnType.isInstance(proxy) &&
+					!RawTargetAccess.class.isAssignableFrom(method.getDeclaringClass())) {
+				// Special case: it returned "this" and the return type of the method
+				// is type-compatible. Note that we can't help if the target sets
+				// a reference to itself in another returned object.
+				retVal = proxy;
+			}
+			else if (retVal == null && returnType != Void.TYPE && returnType.isPrimitive()) {
+				throw new AopInvocationException(
+						"Null return value from advice does not match primitive return type for: " + method);
+			}
+			return retVal;
+		}
+		finally {
+			if (target != null && !targetSource.isStatic()) {
+				// Must have come from TargetSource.
+				targetSource.releaseTarget(target);
+			}
+			if (setProxyContext) {
+				// Restore old proxy.
+				AopContext.setCurrentProxy(oldProxy);
+			}
+		}
+	}
+
+2、proceed()======================================================================================================================
+	public Object proceed() throws Throwable {
+		//当前下标从-1开始,若当前索引值=执行到最后一个拦截器的下标,就执行目标方法
+		if (this.currentInterceptorIndex == this.interceptorsAndDynamicMethodMatchers.size() - 1) {
+			return invokeJoinpoint();
+		}
+        
+        		//获取我们的方法拦截器(TransactionInterceptor)
+		Object interceptorOrInterceptionAdvice =
+				this.interceptorsAndDynamicMethodMatchers.get(++this.currentInterceptorIndex);
+		if (interceptorOrInterceptionAdvice instanceof InterceptorAndDynamicMethodMatcher) {
+			// Evaluate dynamic method matcher here: static part will already have
+			// been evaluated and found to match.
+			InterceptorAndDynamicMethodMatcher dm =
+					(InterceptorAndDynamicMethodMatcher) interceptorOrInterceptionAdvice;
+			if (dm.methodMatcher.matches(this.method, this.targetClass, this.arguments)) {
+				return dm.interceptor.invoke(this);
+			}
+			else {
+				// Dynamic matching failed.
+				// Skip this interceptor and invoke the next in the chain.
+				return proceed();
+			}
+		}
+		else {
+            			//事务拦截器进行调用
+			return ((MethodInterceptor) interceptorOrInterceptionAdvice).invoke(this);
+		}
+	}
+
+org.springframework.transaction.interceptor.TransactionInterceptor#invoke(事务拦截器进行调用)
+	public Object invoke(final MethodInvocation invocation) throws Throwable {
+	    	//获取代理对象的目标class
+		Class<?> targetClass = (invocation.getThis() != null ? AopUtils.getTargetClass(invocation.getThis()) : null);
+
+	    	//使用事务调用
+		return invokeWithinTransaction(invocation.getMethod(), targetClass, new InvocationCallback() {
+			//从这里触发调用目标方法的
+			public Object proceedWithInvocation() throws Throwable {
+				return invocation.proceed();
+			}
+		});
+	}
+
+3、org.springframework.transaction.interceptor.TransactionAspectSupport#invokeWithinTransaction（事务调用）===============================================================
+	protected Object invokeWithinTransaction(Method method, Class<?> targetClass, final InvocationCallback invocation)
+			throws Throwable {
+
+		//通过@EnableTransactionManager 到入了TransactionAttributeSource  可以获取出事务属性对象
+		final TransactionAttribute txAttr = getTransactionAttributeSource().getTransactionAttribute(method, targetClass);
+		//获取工程中的事务管理器
+		final PlatformTransactionManager tm = determineTransactionManager(txAttr);
+		//获取我们需要切入的方法(也就是我们标识了@Transactional注解的方法)
+		final String joinpointIdentification = methodIdentification(method, targetClass, txAttr);
+        
+        		//再这里我们只看我们常用的事务管理器,很明显我们不会配置CallbackPreferringPlatformTransactionManager事务管理器
+		if (txAttr == null || !(tm instanceof CallbackPreferringPlatformTransactionManager)) {
+		    	//判断有没有必要开启事务
+			TransactionInfo txInfo = createTransactionIfNecessary(tm, txAttr, joinpointIdentification);
+			Object retVal = null;
+			try {
+				//调用我们的目标方法
+				retVal = invocation.proceedWithInvocation();
+			}
+			catch (Throwable ex) {
+			    //抛出异常进行回顾
+				completeTransactionAfterThrowing(txInfo, ex);
+				throw ex;
+			}
+			finally {
+			    //清除事务信息
+				cleanupTransactionInfo(txInfo);
+			}
+			//提交事务
+			commitTransactionAfterReturning(txInfo);
+			return retVal;
+		}
+
+	}
+
+4、org.springframework.transaction.interceptor.TransactionAspectSupport#createTransactionIfNecessary====================================================================
+	protected TransactionInfo createTransactionIfNecessary(
+			PlatformTransactionManager tm, TransactionAttribute txAttr, final String joinpointIdentification) {
+
+		//把事务属性包装为
+		if (txAttr != null && txAttr.getName() == null) {
+			txAttr = new DelegatingTransactionAttribute(txAttr) {
+				@Override
+				public String getName() {
+					return joinpointIdentification;
+				}
+			};
+		}
+
+		TransactionStatus status = null;
+		if (txAttr != null) {
+			if (tm != null) {
+			    	//获取一个事务状态
+				status = tm.getTransaction(txAttr);
+			}
+			else {
+				if (logger.isDebugEnabled()) {
+					logger.debug("Skipping transactional joinpoint [" + joinpointIdentification +
+							"] because no transaction manager has been configured");
+				}
+			}
+		}
+		//准备事务信息
+		return prepareTransactionInfo(tm, txAttr, joinpointIdentification, status);
+	}
+
+5、org.springframework.transaction.support.AbstractPlatformTransactionManager#getTransaction===============================================================================
+	public final TransactionStatus getTransaction(TransactionDefinition definition) throws TransactionException {
+		1:)先去尝试开启一个事务
+		Object transaction = doGetTransaction();
+
+		// Cache debug flag to avoid repeated checks.
+		boolean debugEnabled = logger.isDebugEnabled();
+        		//传入进来的事务定义为空
+		if (definition == null) {
+			//使用系统默认的
+			definition = new DefaultTransactionDefinition();
+		}
+        
+        		2:)//判断是否存在事务（若存在事务，在这边直接返回不走下面的处理了）
+		if (isExistingTransaction(transaction)) {
+			// Existing transaction found -> check propagation behavior to find out how to behave.
+			return handleExistingTransaction(definition, transaction, debugEnabled);
+		}
+
+		3:)判读事务超时
+		if (definition.getTimeout() < TransactionDefinition.TIMEOUT_DEFAULT) {
+			throw new InvalidTimeoutException("Invalid transaction timeout", definition.getTimeout());
+		}
+
+		//不存在事务,需要在这边判断(PROPAGATION_MANDATORY 标识要求当前允许的在事务中，但是第二步进行判断之后 说明这里没有事务)
+		if (definition.getPropagationBehavior() == TransactionDefinition.PROPAGATION_MANDATORY) {
+			throw new IllegalTransactionStateException(
+					"No existing transaction found for transaction marked with propagation 'mandatory'");
+		}
+		//PROPAGATION_REQUIRED     
+		//PROPAGATION_REQUIRES_NEW
+		//PROPAGATION_NESTED
+		else if (definition.getPropagationBehavior() == TransactionDefinition.PROPAGATION_REQUIRED ||
+				definition.getPropagationBehavior() == TransactionDefinition.PROPAGATION_REQUIRES_NEW ||
+				definition.getPropagationBehavior() == TransactionDefinition.PROPAGATION_NESTED) {
+			//挂起当前事务,但是当前是没有事务的
+			SuspendedResourcesHolder suspendedResources = suspend(null);
+			if (debugEnabled) {
+				logger.debug("Creating new transaction with name [" + definition.getName() + "]: " + definition);
+			}
+			try {
+				boolean newSynchronization = (getTransactionSynchronization() != SYNCHRONIZATION_NEVER);
+				//创建一个新的事物状态
+				DefaultTransactionStatus status = newTransactionStatus(
+						definition, transaction, true, newSynchronization, debugEnabled, suspendedResources);
+				//开启一个事物
+				doBegin(transaction, definition);
+				//准备事物同步
+				prepareSynchronization(status, definition);
+				return status;
+			}
+			catch (RuntimeException ex) {
+				resume(null, suspendedResources);
+				throw ex;
+			}
+			catch (Error err) {
+				resume(null, suspendedResources);
+				throw err;
+			}
+		}
+		else {
+		    	//创建一个空的事物.
+			if (definition.getIsolationLevel() != TransactionDefinition.ISOLATION_DEFAULT && logger.isWarnEnabled()) {
+				logger.warn("Custom isolation level specified but no actual transaction initiated; " +
+						"isolation level will effectively be ignored: " + definition);
+			}
+			boolean newSynchronization = (getTransactionSynchronization() == SYNCHRONIZATION_ALWAYS);
+			return prepareTransactionStatus(definition, null, true, newSynchronization, debugEnabled, null);
+		}
+	}
+	
+
+doGetTransaction() ================================================代码1处中的代码============================================
+	/**
+	 * 第一次进来的时候,是没有事务持有对象
+	 * */
+	protected Object doGetTransaction() {
+	   	//创建一个数据库事务管理器
+	   	DataSourceTransactionObject txObject = new DataSourceTransactionObject();
+	   	//设置一个事务保存点
+		txObject.setSavepointAllowed(isNestedTransactionAllowed());
+		//从事务同步管理器中获取连接持有器
+		ConnectionHolder conHolder =
+				(ConnectionHolder) TransactionSynchronizationManager.getResource(this.dataSource);
+		//把持有器设置到对象中
+		txObject.setConnectionHolder(conHolder, false);
+		//返回一个事务对象
+		return txObject;
+	}
+isExistingTransaction==================================================================================================================================	
+   	 //第一次进来不会走这个逻辑
+	protected boolean isExistingTransaction(Object transaction) {
+	    	//获取事务对象中的持有器
+		DataSourceTransactionObject txObject = (DataSourceTransactionObject) transaction;
+		//持有器不为空且  有事务激活
+		return (txObject.hasConnectionHolder() && txObject.getConnectionHolder().isTransactionActive());
+	}
+
+=====================handleExistingTransaction================================
+
+
+doBegin============================================================================================================
+	/**
+	 * 第一次调用的时候
+	 * */
+	protected void doBegin(Object transaction, TransactionDefinition definition) {
+		
+		DataSourceTransactionObject txObject = (DataSourceTransactionObject) transaction;
+		Connection con = null;
+
+		try {
+			//第一次进来，事务持有器中是没有对象的,所以我们需要自己手动的设置进去
+			if (!txObject.hasConnectionHolder() ||
+					txObject.getConnectionHolder().isSynchronizedWithTransaction()) {
+				//获取一个数据库连接
+				Connection newCon = this.dataSource.getConnection();
+				if (logger.isDebugEnabled()) {
+					logger.debug("Acquired Connection [" + newCon + "] for JDBC transaction");
+				}
+				//把数据库连接封装为一个持有器对象并且设置到事务对象中
+				txObject.setConnectionHolder(new ConnectionHolder(newCon), true);
+			}
+            
+           			 /开始同步标志
+			txObject.getConnectionHolder().setSynchronizedWithTransaction(true);
+			
+			con = txObject.getConnectionHolder().getConnection();
+            			//获取事务的隔离级别
+			Integer previousIsolationLevel = DataSourceUtils.prepareConnectionForTransaction(con, definition);
+			txObject.setPreviousIsolationLevel(previousIsolationLevel);
+
+           			 /**
+             			* 关闭事务自动提交
+             			* */
+			if (con.getAutoCommit()) {
+				txObject.setMustRestoreAutoCommit(true);
+				if (logger.isDebugEnabled()) {
+					logger.debug("Switching JDBC Connection [" + con + "] to manual commit");
+				}
+				con.setAutoCommit(false);
+			}
+            
+            			//判断事务是不是为只读的事务
+			prepareTransactionalConnection(con, definition);
+			//设置事务激活
+			txObject.getConnectionHolder().setTransactionActive(true);
+
+			int timeout = determineTimeout(definition);
+			if (timeout != TransactionDefinition.TIMEOUT_DEFAULT) {
+				txObject.getConnectionHolder().setTimeoutInSeconds(timeout);
+			}
+
+			//把数据源和事务持有器保存到事务同步管理器中
+			if (txObject.isNewConnectionHolder()) {
+				TransactionSynchronizationManager.bindResource(getDataSource(), txObject.getConnectionHolder());
+			}
+		}
+
+		catch (Throwable ex) {
+			if (txObject.isNewConnectionHolder()) {
+			    	//抛出异常,释放资源
+				DataSourceUtils.releaseConnection(con, this.dataSource);
+				txObject.setConnectionHolder(null, false);
+			}
+			throw new CannotCreateTransactionException("Could not open JDBC Connection for transaction", ex);
+		}
+	}
+	
+==========================	prepareSynchronization(status, definition);把当前的事务设置到同步管理器中(为下次准备)===========================
+	protected void prepareSynchronization(DefaultTransactionStatus status, TransactionDefinition definition) {
+		if (status.isNewSynchronization()) {
+			//设置事务激活
+			TransactionSynchronizationManager.setActualTransactionActive(status.hasTransaction());
+			//设置隔离级别
+			TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(
+					definition.getIsolationLevel() != TransactionDefinition.ISOLATION_DEFAULT ?
+							definition.getIsolationLevel() : null);
+			//设置只读事物
+			ransactionSynchronizationManager.setCurrentTransactionReadOnly(definition.isReadOnly());
+			//设置事务的名称
+			TransactionSynchronizationManager.setCurrentTransactionName(definition.getName());
+			TransactionSynchronizationManager.initSynchronization();
+		}
+	}
+	
+
+===================================		//准备事务信息 prepareTransactionInfo(tm, txAttr, joinpointIdentification, status);	
+	protected TransactionInfo prepareTransactionInfo(PlatformTransactionManager tm,
+			TransactionAttribute txAttr, String joinpointIdentification, TransactionStatus status) {
+        
+        		//把事务管理器，事务属性,连接点信息封装成为TransactionInfo
+		TransactionInfo txInfo = new TransactionInfo(tm, txAttr, joinpointIdentification);
+		if (txAttr != null) {
+			// We need a transaction for this method...
+			if (logger.isTraceEnabled()) {
+				logger.trace("Getting transaction for [" + txInfo.getJoinpointIdentification() + "]");
+			}
+		    	//设置事务状态
+			txInfo.newTransactionStatus(status);
+		}
+		else {
+			// The TransactionInfo.hasTransaction() method will return false. We created it only
+			// to preserve the integrity of the ThreadLocal stack maintained in this class.
+			if (logger.isTraceEnabled())
+				logger.trace("Don't need to create transaction for [" + joinpointIdentification +
+						"]: This method isn't transactional.");
+		}
+
+        		//把事务信息绑定到当前线程上去
+		txInfo.bindToThread();
+		return txInfo;
+	}

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello
+  # 指定 label，便于检索
+  labels:
+    app: hello
+spec:
+  containers:
+  - name: hello
+    # 指定镜像
+    image: linuxcloud/springboot-docker:v1.0
+    # 指定暴露端口
+    ports:
+    - containerPort: 80

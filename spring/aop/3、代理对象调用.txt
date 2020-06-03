@@ -1,0 +1,141 @@
+	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+		MethodInvocation invocation;
+		Object oldProxy = null;
+		boolean setProxyContext = false;
+
+		TargetSource targetSource = this.advised.targetSource;
+		Class<?> targetClass = null;
+		Object target = null;
+
+		try {
+		  
+			Object retVal;
+            
+           			 //是否暴露代理对象
+			if (this.advised.exposeProxy) {
+				//把代理对象添加到TheadLocal中
+				oldProxy = AopContext.setCurrentProxy(proxy);
+				setProxyContext = true;
+			}
+
+            			//获取被代理对象
+			target = targetSource.getTarget();
+			if (target != null) {
+			    	//设置被代理对象的class
+				targetClass = target.getClass();
+			}
+
+			//把增强器转为方法拦截器链
+			List<Object> chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice(method, targetClass);
+
+		    	//若方法拦截器链为空
+			if (chain.isEmpty()) {
+               				 //通过反射直接调用目标方法
+				Object[] argsToUse = AopProxyUtils.adaptArgumentsIfNecessary(method, args);
+				retVal = AopUtils.invokeJoinpointUsingReflection(target, method, argsToUse);
+			}
+			else {
+				//创建方法拦截器调用链条
+				invocation = new ReflectiveMethodInvocation(proxy, target, method, args, targetClass, chain);
+				//执行拦截器链
+				retVal = invocation.proceed();
+			}
+
+			//获取方法的返回值类型
+			Class<?> returnType = method.getReturnType();
+			if (retVal != null && retVal == target &&
+					returnType != Object.class && returnType.isInstance(proxy) &&
+					!RawTargetAccess.class.isAssignableFrom(method.getDeclaringClass())) {
+				//如果方法返回值为 this，即 return this; 则将代理对象 proxy 赋值给 retVal 
+				retVal = proxy;
+			}
+			//如果返回值类型为基础类型，比如 int，long 等，当返回值为 null，抛出异常
+			else if (retVal == null && returnType != Void.TYPE && returnType.isPrimitive()) {
+				throw new AopInvocationException(
+						"Null return value from advice does not match primitive return type for: " + method);
+			}
+			return retVal;
+		}
+		finally {
+			if (target != null && !targetSource.isStatic()) {
+				// Must have come from TargetSource.
+				targetSource.releaseTarget(target);
+			}
+			if (setProxyContext) {
+				// Restore old proxy.
+				AopContext.setCurrentProxy(oldProxy);
+			}
+		}
+	}
+
+=====================org.springframework.aop.framework.AdvisedSupport#getInterceptorsAndDynamicInterceptionAdvice===========
+	把增强器中转为方法拦截器链
+	public List<Object> getInterceptorsAndDynamicInterceptionAdvice(Method method, Class<?> targetClass) {
+		//从缓存中获取缓存key 第一次肯定获取不到
+		MethodCacheKey cacheKey = new MethodCacheKey(method);
+		//通过cacheKey获取缓存值
+		List<Object> cached = this.methodCache.get(cacheKey);
+		
+		//从缓存中没有获取到
+		if (cached == null) {
+		    	//获取所有的拦截器
+			cached = this.advisorChainFactory.getInterceptorsAndDynamicInterceptionAdvice(
+					this, method, targetClass);
+		    	//放入缓存.....
+			this.methodCache.put(cacheKey, cached);
+		}
+		return cached;
+	}
+
+=====================org.springframework.aop.framework.AdvisorChainFactory#getInterceptorsAndDynamicInterceptionAdvice====
+	public List<Object> getInterceptorsAndDynamicInterceptionAdvice(
+			Advised config, Method method, Class<?> targetClass) {
+
+	    	//创建拦截器集合长度是增强器的长度
+		List<Object> interceptorList = new ArrayList<Object>(config.getAdvisors().length);
+		
+		Class<?> actualClass = (targetClass != null ? targetClass : method.getDeclaringClass());
+		boolean hasIntroductions = hasMatchingIntroductions(config, actualClass);
+		AdvisorAdapterRegistry registry = GlobalAdvisorAdapterRegistry.getInstance();
+        
+        		//遍历所有的增强器集合
+		for (Advisor advisor : config.getAdvisors()) {
+			//判断增强器是不是PointcutAdvisor
+			if (advisor instanceof PointcutAdvisor) {
+				//把增强器转为PointcutAdvisor
+				PointcutAdvisor pointcutAdvisor = (PointcutAdvisor) advisor;
+				//通过方法匹配器对增强器进行匹配
+				if (config.isPreFiltered() || pointcutAdvisor.getPointcut().getClassFilter().matches(actualClass)) {
+					MethodMatcher mm = pointcutAdvisor.getPointcut().getMethodMatcher();
+					//能够匹配
+					if (MethodMatchers.matches(mm, method, actualClass, hasIntroductions)) {
+						//把增强器转为拦截器
+						MethodInterceptor[] interceptors = registry.getInterceptors(advisor);
+						if (mm.isRuntime()) {
+							// Creating a new object instance in the getInterceptors() method
+							// isn't a problem as we normally cache created chains.
+							for (MethodInterceptor interceptor : interceptors) {
+								interceptorList.add(new InterceptorAndDynamicMethodMatcher(interceptor, mm));
+							}
+						}
+						else {
+							interceptorList.addAll(Arrays.asList(interceptors));
+						}
+					}
+				}
+			}
+			else if (advisor instanceof IntroductionAdvisor) {
+				IntroductionAdvisor ia = (IntroductionAdvisor) advisor;
+				if (config.isPreFiltered() || ia.getClassFilter().matches(actualClass)) {
+					Interceptor[] interceptors = registry.getInterceptors(advisor);
+					interceptorList.addAll(Arrays.asList(interceptors));
+				}
+			}
+			else {
+				Interceptor[] interceptors = registry.getInterceptors(advisor);
+				interceptorList.addAll(Arrays.asList(interceptors));
+			}
+		}
+
+		return interceptorList;
+	}

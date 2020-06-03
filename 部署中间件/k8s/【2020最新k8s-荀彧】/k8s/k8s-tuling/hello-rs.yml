@@ -1,0 +1,19 @@
+apiVersion: extensions/v1beta1
+kind: ReplicaSet 
+metadata:
+  name: hello-rs
+spec:
+  selector:
+    matchLabels:
+      app: hello
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: hello
+    spec:
+      containers:
+      - name: hello
+        image: linuxcloud/springboot-docker:v2.0
+        ports:
+        - containerPort: 80

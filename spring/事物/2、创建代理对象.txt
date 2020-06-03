@@ -1,0 +1,75 @@
+1、org.springframework.aop.framework.autoproxy.AbstractAutoProxyCreator#createProxy
+
+
+
+
+
+1、org.springframework.aop.framework.autoproxy.AbstractAutoProxyCreator#createProxy==============================================================
+	
+	protected Object createProxy(
+			Class<?> beanClass, String beanName, Object[] specificInterceptors, TargetSource targetSource) {
+
+		//暴露代理对象
+		if (this.beanFactory instanceof ConfigurableListableBeanFactory) {
+			AutoProxyUtils.exposeTargetClass((ConfigurableListableBeanFactory) this.beanFactory, beanName, beanClass);
+		}
+        
+        		//创建代理工厂
+		ProxyFactory proxyFactory = new ProxyFactory();
+		proxyFactory.copyFrom(this);
+        
+        		//判断是cglib代理还是jdk代理
+		if (!proxyFactory.isProxyTargetClass()) {
+			if (shouldProxyTargetClass(beanClass, beanName)) {
+				proxyFactory.setProxyTargetClass(true);
+			}
+			else {
+				evaluateProxyInterfaces(beanClass, proxyFactory);
+			}
+		}
+        
+        		//把合适的拦截器转为增强器
+		Advisor[] advisors = buildAdvisors(beanName, specificInterceptors);
+		proxyFactory.addAdvisors(advisors);
+		proxyFactory.setTargetSource(targetSource);
+		customizeProxyFactory(proxyFactory);
+
+		proxyFactory.setFrozen(this.freezeProxy);
+		if (advisorsPreFiltered()) {
+			proxyFactory.setPreFiltered(true);
+		}
+        
+       		 //真正的创建代理对象
+		return proxyFactory.getProxy(getProxyClassLoader());
+	}
+	
+===========================================================================================================
+	public AopProxy createAopProxy(AdvisedSupport config) throws AopConfigException {
+		//判断配置是否有效，配置中有代理类信息，判断有没有用户自己定义的解析接口
+		if (config.isOptimize() || config.isProxyTargetClass() || hasNoUserSuppliedProxyInterfaces(config)) {
+			Class<?> targetClass = config.getTargetClass();
+			if (targetClass == null) {
+				throw new AopConfigException("TargetSource cannot determine target class: " +
+						"Either an interface or a target is required for proxy creation.");
+			}
+			//标识的是接口或者
+			if (targetClass.isInterface() || Proxy.isProxyClass(targetClass)) {
+				return new JdkDynamicAopProxy(config);
+			}
+			//创建cglib接口
+			return new ObjenesisCglibAopProxy(config);
+		}
+		else {
+		    	创建jdk代理
+			return new JdkDynamicAopProxy(config);
+		}
+	}
+	
+	public Object getProxy(ClassLoader classLoader) {
+		if (logger.isDebugEnabled()) {
+			logger.debug("Creating JDK dynamic proxy: target source is " + this.advised.getTargetSource());
+		}
+		Class<?>[] proxiedInterfaces = AopProxyUtils.completeProxiedInterfaces(this.advised, true);
+		findDefinedEqualsAndHashCodeMethods(proxiedInterfaces);
+		return Proxy.newProxyInstance(classLoader, proxiedInterfaces, this);
+	}

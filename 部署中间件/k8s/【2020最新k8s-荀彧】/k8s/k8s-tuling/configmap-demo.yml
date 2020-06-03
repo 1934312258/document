@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hello-config
+data:
+  # 类文件键
+  application.properties: |
+    env=test
+    msg=this is config map properties.
+  mysql.properties: |
+    mysql.hostname=172.17.8.108
+    mysql.port=8888
