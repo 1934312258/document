@@ -1,26 +1,26 @@
 从refresh方法进入
 
 首先执行new出来的 BeanDefinitionRegistryPostProcessor，然后执行实现PriorityOrdered
-然后执行实现order接口的，最后执行普通的BeanDefinitionRegistryPostProcessor
+然后执行实现order接口的，最后执行普通的BeanDefinitionRegistryPostProcessor，用于改变bean定义，及动态修改bean注册信息
 
-public static void invokeBeanFactoryPostProcessors(
+	public static void invokeBeanFactoryPostProcessors(
 			ConfigurableListableBeanFactory beanFactory, List<BeanFactoryPostProcessor> beanFactoryPostProcessors) {
 
 		// Invoke BeanDefinitionRegistryPostProcessors first,if any.
 		Set<String> processedBeans = new HashSet<String>();
         
-        //判断IOC 容器是不是BeanDefinitionRegistry的？
+       		 //判断IOC 容器是不是BeanDefinitionRegistry的？
 		if (beanFactory instanceof BeanDefinitionRegistry) {
-		    //把IOC容器 强制转为BeanDefinitionRegistry类型的
+		    	//把IOC容器 强制转为BeanDefinitionRegistry类型的
 			BeanDefinitionRegistry registry = (BeanDefinitionRegistry) beanFactory;
 			//创建一个普通的PostProcessors的list的组件
 			List<BeanFactoryPostProcessor> regularPostProcessors = new LinkedList<BeanFactoryPostProcessor>();
 			//创建一个BeanDefinitionRegistryPostProcessor类型的list
 			List<BeanDefinitionRegistryPostProcessor> registryProcessors = new LinkedList<BeanDefinitionRegistryPostProcessor>();
             
-            //处理容器硬编码(new 出来的)带入的beanFacotryPostProcessors
+            			//处理容器硬编码(new 出来的)带入的beanFacotryPostProcessors
 			for (BeanFactoryPostProcessor postProcessor : beanFactoryPostProcessors) {
-			    //判断是不是BeanDefinitionRegistryPostProcessor
+			    	//判断是不是BeanDefinitionRegistryPostProcessor
 				if (postProcessor instanceof BeanDefinitionRegistryPostProcessor) {
 				    
 					BeanDefinitionRegistryPostProcessor registryProcessor =
@@ -36,7 +36,7 @@ public static void invokeBeanFactoryPostProcessors(
 				}
 			}
 
-            //创建一个当前注册的RegistryProcessors的集合
+            			//创建一个当前注册的RegistryProcessors的集合
 			List<BeanDefinitionRegistryPostProcessor> currentRegistryProcessors = new ArrayList<BeanDefinitionRegistryPostProcessor>();
 
 			第一步:去容器中查询是否有BeanDefinitionRegistryPostProcessor类型的

@@ -1,4 +1,4 @@
-public void processConfigBeanDefinitions(BeanDefinitionRegistry registry) {
+	zpublic void processConfigBeanDefinitions(BeanDefinitionRegistry registry) {
 		List<BeanDefinitionHolder> configCandidates = new ArrayList<BeanDefinitionHolder>();
 		//去IOC容器中的获取Bean定义的名称
 		//	private volatile List<String> beanDefinitionNames = new ArrayList<String>(256);
