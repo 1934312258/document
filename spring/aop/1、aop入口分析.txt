@@ -75,7 +75,7 @@ class AspectJAutoProxyRegistrar implements ImportBeanDefinitionRegistrar {
 
 
 3）所以我们现在可以分析一下AnnotationAwareAspectJAutoProxyCreator 他是什么一个鬼？
-不能放图片，可以看累的继承图shift Ctrl alt +U
+不能放图片，可以看类的继承图shift Ctrl alt +U
 1)我们发现了AnnotationAwareAspectJAutoProxyCreator  有实现了***Aware接口的特性(BeanFactoryAware)
 
 2)还发现了AnnotationAwareAspectJAutoProxyCreator 实现了BeanPostProcessor接口（后置处理器的特性）

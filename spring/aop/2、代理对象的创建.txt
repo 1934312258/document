@@ -12,7 +12,8 @@
 
 	public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
 		if (bean != null) {
-			//通过传入的class 和beanName生成缓存key
+			
+
 			Object cacheKey = getCacheKey(bean.getClass(), beanName);
 			if (!this.earlyProxyReferences.contains(cacheKey)) {
 			    //若当前bean合适被包装为代理bean就进行处理
